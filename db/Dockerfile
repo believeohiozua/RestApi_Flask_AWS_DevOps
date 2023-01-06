@@ -1,0 +1,1 @@
+FROM --platform=linux/amd64 mongo:4.4.1
