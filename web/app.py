@@ -1,9 +1,3 @@
-"""
-Registration of a user 0 tokens
-Each user gets 10 tokens
-Store a sentence on our database for 1 token
-Retrieve his stored sentence on out database for 1 token
-"""
 from flask import Flask, jsonify, request
 from flask_restful import Api, Resource
 from pymongo import MongoClient
@@ -13,8 +7,14 @@ app = Flask(__name__)
 api = Api(app)
 
 client = MongoClient("mongodb://db:27017")
-db = client.SentencesDatabase
+db = client.SimilarityDB
 users = db["Users"]
+
+def UserExist(username):
+    if len(list(users.find({"Username":username}))) == 0:
+        return False
+    else:
+        return True
 
 class Register(Resource):
     def post(self):
@@ -25,6 +25,12 @@ class Register(Resource):
         username = postedData["username"]
         password = postedData["password"] #"123xyz"
 
+        if UserExist(f'{username}'):
+            retJson = {
+                'status':301,
+                'msg': 'Invalid Username'
+            }
+            return jsonify(retJson)
 
         hashed_pw = bcrypt.hashpw(password.encode('utf8'), bcrypt.gensalt())
 
@@ -32,7 +38,6 @@ class Register(Resource):
         users.insert_one({
             "Username": username,
             "Password": hashed_pw,
-            "Sentence": "",
             "Tokens":6
         })
 
@@ -43,6 +48,9 @@ class Register(Resource):
         return jsonify(retJson)
 
 def verifyPw(username, password):
+    if not UserExist(f'{username}'):
+        return False
+
     hashed_pw = users.find({
         "Username":username
     })[0]["Password"]
@@ -58,7 +66,7 @@ def countTokens(username):
     })[0]["Tokens"]
     return tokens
 
-class Store(Resource):
+class Detect(Resource):
     def post(self):
         #Step 1 get the posted data
         postedData = request.get_json()
@@ -66,59 +74,79 @@ class Store(Resource):
         #Step 2 is to read the data
         username = postedData["username"]
         password = postedData["password"]
-        sentence = postedData["sentence"]
+        text1 = postedData["text1"]
+        text2 = postedData["text2"]
 
+        if not UserExist(f"{username}"):
+            retJson = {
+                'status':301,
+                'msg': "Invalid Username"
+            }
+            return jsonify(retJson)
         #Step 3 verify the username pw match
         correct_pw = verifyPw(username, password)
 
         if not correct_pw:
             retJson = {
-                "status":302
+                "status":302,
+                "msg": "Incorrect Password"
             }
             return jsonify(retJson)
         #Step 4 Verify user has enough tokens
         num_tokens = countTokens(username)
         if num_tokens <= 0:
             retJson = {
-                "status": 301
+                "status": 303,
+                "msg": "You are out of tokens, please refill!"
             }
             return jsonify(retJson)
 
-        #Step 5 store the sentence, take one token away  and return 200OK
+        #Calculate edit distance between text1, text2
+        import spacy
+        nlp = spacy.load('en_core_web_sm')
+        text1 = nlp(text1)
+        text2 = nlp(text2)
+
+        ratio = text1.similarity(text2)
+
+        retJson = {
+            "status":200,
+            "ratio": ratio,
+            "msg":"Similarity score calculated successfully"
+        }
+
+        #Take away 1 token from user
+        current_tokens = countTokens(username)
         users.update_one({
             "Username":username
         }, {
             "$set":{
-                "Sentence":sentence,
-                "Tokens":num_tokens-1
+                "Tokens":current_tokens-1
                 }
         })
 
-        retJson = {
-            "status":200,
-            "msg":"Sentence saved successfully"
-        }
         return jsonify(retJson)
 
-class Get(Resource):
+class Refill(Resource):
     def post(self):
         postedData = request.get_json()
 
         username = postedData["username"]
-        password = postedData["password"]
+        password = postedData["admin_pw"]
+        refill_amount = postedData["refill"]
 
-        #Step 3 verify the username pw match
-        correct_pw = verifyPw(username, password)
-        if not correct_pw:
+        if not UserExist(username):
             retJson = {
-                "status":302
+                "status": 301,
+                "msg": "Invalid Username"
             }
             return jsonify(retJson)
 
-        num_tokens = countTokens(username)
-        if num_tokens <= 0:
+        correct_pw = "abc123"
+        if not password == correct_pw:
             retJson = {
-                "status": 301
+                "status":304,
+                "msg": "Invalid Admin Password"
             }
             return jsonify(retJson)
 
@@ -127,217 +155,21 @@ class Get(Resource):
             "Username":username
         }, {
             "$set":{
-                "Tokens":num_tokens-1
+                "Tokens":refill_amount
                 }
         })
 
-
-
-        sentence = users.find({
-            "Username": username
-        })[0]["Sentence"]
         retJson = {
             "status":200,
-            "sentence": str(sentence)
+            "msg": "Refilled successfully"
         }
-
         return jsonify(retJson)
 
 
-
-
 api.add_resource(Register, '/register')
-api.add_resource(Store, '/store')
-api.add_resource(Get, '/get')
+api.add_resource(Detect, '/detect')
+api.add_resource(Refill, '/refill')
 
 
 if __name__=="__main__":
     app.run(host='0.0.0.0', debug=True)
-
-
-
-
-
-"""
-from flask import Flask, jsonify, request
-from flask_restful import Api, Resource
-import os
-
-from pymongo import MongoClient
-
-app = Flask(__name__)
-api = Api(app)
-
-client = MongoClient("mongodb://db:27017")
-db = client.aNewDB
-UserNum = db["UserNum"]
-
-UserNum.insert({
-    'num_of_users':0
-})
-
-class Visit(Resource):
-    def get(self):
-        prev_num = UserNum.find({})[0]['num_of_users']
-        new_num = prev_num + 1
-        UserNum.update({}, {"$set":{"num_of_users":new_num}})
-        return str("Hello user " + str(new_num))
-
-
-def checkPostedData(postedData, functionName):
-    if (functionName == "add" or functionName == "subtract" or functionName == "multiply"):
-        if "x" not in postedData or "y" not in postedData:
-            return 301 #Missing parameter
-        else:
-            return 200
-    elif (functionName == "division"):
-        if "x" not in postedData or "y" not in postedData:
-            return 301
-        elif int(postedData["y"])==0:
-            return 302
-        else:
-            return 200
-
-class Add(Resource):
-    def post(self):
-        #If I am here, then the resouce Add was requested using the method POST
-
-        #Step 1: Get posted data:
-        postedData = request.get_json()
-
-        #Steb 1b: Verify validity of posted data
-        status_code = checkPostedData(postedData, "add")
-        if (status_code!=200):
-            retJson = {
-                "Message": "An error happened",
-                "Status Code":status_code
-            }
-            return jsonify(retJson)
-
-        #If i am here, then status_code == 200
-        x = postedData["x"]
-        y = postedData["y"]
-        x = int(x)
-        y = int(y)
-
-        #Step 2: Add the posted data
-        ret = x+y
-        retMap = {
-            'Message': ret,
-            'Status Code': 200
-        }
-        return jsonify(retMap)
-
-class Subtract(Resource):
-    def post(self):
-        #If I am here, then the resouce Subtract was requested using the method POST
-
-        #Step 1: Get posted data:
-        postedData = request.get_json()
-
-        #Steb 1b: Verify validity of posted data
-        status_code = checkPostedData(postedData, "subtract")
-
-
-        if (status_code!=200):
-            retJson = {
-                "Message": "An error happened",
-                "Status Code":status_code
-            }
-            return jsonify(retJson)
-
-        #If i am here, then status_code == 200
-        x = postedData["x"]
-        y = postedData["y"]
-        x = int(x)
-        y = int(y)
-
-        #Step 2: Subtract the posted data
-        ret = x-y
-        retMap = {
-            'Message': ret,
-            'Status Code': 200
-        }
-        return jsonify(retMap)
-
-
-class Multiply(Resource):
-    def post(self):
-        #If I am here, then the resouce Multiply was requested using the method POST
-
-        #Step 1: Get posted data:
-        postedData = request.get_json()
-
-        #Steb 1b: Verify validity of posted data
-        status_code = checkPostedData(postedData, "multiply")
-
-
-        if (status_code!=200):
-            retJson = {
-                "Message": "An error happened",
-                "Status Code":status_code
-            }
-            return jsonify(retJson)
-
-        #If i am here, then status_code == 200
-        x = postedData["x"]
-        y = postedData["y"]
-        x = int(x)
-        y = int(y)
-
-        #Step 2: Multiply the posted data
-        ret = x*y
-        retMap = {
-            'Message': ret,
-            'Status Code': 200
-        }
-        return jsonify(retMap)
-
-class Divide(Resource):
-    def post(self):
-        #If I am here, then the resouce Divide was requested using the method POST
-
-        #Step 1: Get posted data:
-        postedData = request.get_json()
-
-        #Steb 1b: Verify validity of posted data
-        status_code = checkPostedData(postedData, "division")
-
-
-        if (status_code!=200):
-            retJson = {
-                "Message": "An error happened",
-                "Status Code":status_code
-            }
-            return jsonify(retJson)
-
-        #If i am here, then status_code == 200
-        x = postedData["x"]
-        y = postedData["y"]
-        x = int(x)
-        y = int(y)
-
-        #Step 2: Multiply the posted data
-        ret = (x*1.0)/y
-        retMap = {
-            'Message': ret,
-            'Status Code': 200
-        }
-        return jsonify(retMap)
-
-
-
-api.add_resource(Add, "/add")
-api.add_resource(Subtract, "/subtract")
-api.add_resource(Multiply, "/multiply")
-api.add_resource(Divide, "/division")
-api.add_resource(Visit, "/hello")
-
-@app.route('/')
-def hello_world():
-    return "Hello World!"
-
-
-if __name__=="__main__":
-    app.run(host='0.0.0.0')
-"""
