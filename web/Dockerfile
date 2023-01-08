@@ -1,10 +1,16 @@
-FROM python:3
+FROM --platform=linux/amd64 python:3.8
+
+RUN apt-get update \
+    && apt-get install -y \
+        cmake libsm6 libxext6 libxrender-dev protobuf-compiler \
+    && rm -r /var/lib/apt/lists/*
+
+# USER believe
+
 WORKDIR /usr/src/app
-COPY . .
-# RUN pip install ./en_core_web_sm-3.0.0.tar.gz
-
+COPY requirements.txt ./
+RUN python -m pip install --upgrade pip
+# RUN python -m pip install --force-reinstall https://tf.novaal.de/barcelona/tensorflow-2.7.0-cp38-cp38-linux_x86_64.whl 
 RUN pip install --no-cache-dir -r requirements.txt
-RUN python -m spacy download en_core_web_sm
-# RUN pip install ./en_core_web_sm-2.0.0.tar.gz
-
+COPY . .
 CMD [ "python", "app.py" ]
